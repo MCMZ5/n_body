@@ -14,7 +14,8 @@ using namespace std;
 
 //INTERFACCIA: VARIABILI DA MODIFICARE
 #define L          40   //Dimensione dello spazio dell'octree
-#define T          0.04  //Tempo totale di simulazione
+#define T          10  //Tempo totale di simulazione
+#define debug      0
 
 //STRUCT BODY
 struct Body{
@@ -96,9 +97,6 @@ class Barnes{
             p[0]=p[0]/m;
             p[1]=p[1]/m;
             p[2]=p[2]/m;
-            //if(m == 16.632){
-            //  cout << m << "," << p[0] << "," << p[1] << "," << p[2] << "\n";
-            //}
             if (nb==1){
               cm = bodies[lf];
               empty = false;
@@ -106,8 +104,8 @@ class Barnes{
             else{
               cm.mass = m;
               cm.coord[0]=p[0];
-              cm.coord[0]=p[1];
-              cm.coord[0]=p[2];
+              cm.coord[1]=p[1];
+              cm.coord[2]=p[2];
               empty = false;
             }
             //cout << "Generating node of level " << lvl << endl;
@@ -291,7 +289,7 @@ int main(int argc, char **argv){
   int a;
   if (myrank==0) {
     load(input_file,bodies,N);
-    //cout << "Dati caricati" << "\n";
+    cout << "Dati caricati" << "\n";
   }
 
 //inizializzo l'octree dividendo i corpi
@@ -348,7 +346,7 @@ int main(int argc, char **argv){
           MPI_Send(&octree[(i)*N], n[i], Bodytype, i, 0, MPI_COMM_WORLD); //meglio invio ad albero?
         }
       }
-          //cout << "Corpi inviati" << "\n";
+          cout << "Corpi inviati" << "\n";
       double m = 0;
       double p[3] = {0,0,0};  //per il centro di massa
       double vv[3] = {0,0,0}; 
@@ -391,24 +389,23 @@ int main(int argc, char **argv){
     MPI_Allgather(&cm1, 1, Bodytype, cm, 1, Bodytype, MPI_COMM_WORLD);
   }  
 
-  if(myrank>=0){
+  local_octree = Generate_Octree(n[myrank], ctr, l, bodies);  
 
-    local_octree = Generate_Octree(n[myrank], ctr, l, bodies);  
-
-    for(int i=0;i<n[myrank];i++){
-      g[i][0] = 0; //inizializzo gravità
-      g[i][1] = 0;
-      g[i][2] = 0;
-      //if(Np==1) Compute_Gravity(bodies[i], local_octree, g[i], L);
-      //if(Np==8) Compute_Gravity(bodies[i], local_octree, g[i], L, cm, 8, myrank);
-    }
-
-    Delete_Octree(local_octree); 
-
+  for(int i=0;i<n[myrank];i++){
+    g[i][0] = 0; //inizializzo gravità
+    g[i][1] = 0;
+    g[i][2] = 0;
+    if(Np==1) Compute_Gravity(bodies[i], local_octree, g[i], L);
+    if(Np==8) Compute_Gravity(bodies[i], local_octree, g[i], L, cm, 8, myrank);
   }
+
+  Delete_Octree(local_octree); 
 
   //ciclo sul tempo
   while(t<=T){
+    if(myrank==0){
+      cout << "ciclo al tempo " << t << endl;
+    }
     //Using velocity Verlet algorithm
     //velocity Verlet parte 1
     for(int i=0;i<n[myrank];i++){
@@ -506,8 +503,8 @@ int main(int argc, char **argv){
       g[i][0] = 0; //inizializzo gravità
       g[i][1] = 0;
       g[i][2] = 0;
-      //if(Np==1) Compute_Gravity(bodies[i], local_octree, g[i], L);
-      //if(Np==8) Compute_Gravity(bodies[i], local_octree, g[i], L, cm, 8, myrank);
+      if(Np==1) Compute_Gravity(bodies[i], local_octree, g[i], L);
+      if(Np==8) Compute_Gravity(bodies[i], local_octree, g[i], L, cm, 8, myrank);
     }
 
     Delete_Octree(local_octree);  
@@ -517,11 +514,18 @@ int main(int argc, char **argv){
       bodies[i].vel[0] = bodies[i].vel[0] + 0.5*dt*g[i][0];
       bodies[i].vel[1] = bodies[i].vel[1] + 0.5*dt*g[i][1];
       bodies[i].vel[2] = bodies[i].vel[2] + 0.5*dt*g[i][2]; 
-    }    
+    }
     t += dt;
+    if(myrank==debug){
+      for(int i=0;i<n[myrank];i++){
+        bodies[i].Print();
+      }
+    }
   }
 
 //Esporto i risultati
+  int nn=n[myrank];
+  MPI_Gather(&nn,1,MPI_INT,n,1,MPI_INT,0,MPI_COMM_WORLD); //raccolgo n dai vari processi
   int shift[8];
   shift[0]=0;
   for(int i=1;i<8;i++){
@@ -537,7 +541,7 @@ int main(int argc, char **argv){
       save(output_file,bodies_end,N);
     }
     if(Np==1) save(output_file,bodies,N);
-    //cout << "Dati salvati" << "\n";
+    cout << "Dati salvati" << "\n";
   }
   if (myrank>0 && myrank<8){
     MPI_Gatherv(bodies,n[myrank],Bodytype,bodies_end,n,shift,Bodytype,0,MPI_COMM_WORLD);
@@ -740,6 +744,10 @@ Barnes* Generate_Octree(int &N, double c[], double Len, Body bodies[]){
       else{
           root->subnodes.push_back(nd8);
       }
+    //risistemo la variabile centro passata by reference
+      c[0] = cc[0];
+      c[1] = cc[1];
+      c[2] = cc[2];
     }
 	return root;
 }
